@@ -54,7 +54,14 @@ On macOS 26, Aperture can use Apple’s built-in on-device Foundation Model when
 
 ### Optional local Ollama models
 
-Install [Ollama](https://ollama.com), then pull the default compact model:
+Install [Ollama](https://ollama.com), then choose **Get a Model** from Aperture’s model menu or use Settings → Local AI. Aperture includes opt-in presets for:
+
+- Gemma 3 1B — fast everyday chat, approximately 815 MB.
+- Qwen 2.5 1.5B — compact multilingual help, approximately 986 MB.
+- Llama 3.2 3B — balanced general assistance, approximately 2.0 GB.
+- Gemma 3 4B — stronger answers and reasoning, approximately 3.3 GB.
+
+Downloads show live progress and go directly through the local Ollama service. Aperture never downloads a model automatically. You can still pull a model manually:
 
 ```zsh
 ollama pull llama3.2:3b

@@ -292,6 +292,27 @@ private struct AssistantModelMenu: View {
                 }
             }
             Divider()
+            Menu {
+                ForEach(OllamaModelPreset.catalog) { preset in
+                    if assistant.availableModels.contains(preset.id) {
+                        Button { model.selectOllamaModel(preset.id) } label: {
+                            Label("\(preset.title) — Installed", systemImage: "checkmark.circle.fill")
+                        }
+                    } else {
+                        Button {
+                            assistant.install(preset, endpoint: model.ollamaEndpoint) {
+                                model.selectOllamaModel(preset.id)
+                            }
+                        } label: {
+                            Label("\(preset.title) · \(preset.downloadSize)", systemImage: preset.systemImage)
+                        }
+                        .disabled(assistant.downloadingModel != nil)
+                    }
+                }
+            } label: {
+                Label("Get a Model", systemImage: "arrow.down.circle")
+            }
+            Divider()
             Button("Refresh Models", systemImage: "arrow.clockwise") { assistant.probe() }
             SettingsLink {
                 Label("Local AI Settings…", systemImage: "gearshape")

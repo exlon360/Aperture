@@ -138,6 +138,37 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if model.localAIEngine == .ollama {
+                Section("Get local models") {
+                    Text("Choose a model to download directly through Ollama. Downloads are opt-in and stay on this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(OllamaModelPreset.catalog) { preset in
+                        modelCatalogRow(preset)
+                    }
+
+                    if let notice = assistantController.modelInstallNotice {
+                        Label(notice, systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(AperturePalette.mint)
+                    }
+                    if let error = assistantController.modelInstallError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(AperturePalette.accent)
+                    }
+
+                    HStack {
+                        Link("Install Ollama", destination: URL(string: "https://ollama.com/download")!)
+                        Spacer()
+                        Text("Models are provided under their publishers’ terms.")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
             Section("Optional Web Search") {
                 SecureField("Ollama API key", text: $model.ollamaWebSearchKey)
                     .textFieldStyle(.roundedBorder)
@@ -155,6 +186,56 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .onAppear { assistantController.probe() }
+    }
+
+    @ViewBuilder
+    private func modelCatalogRow(_ preset: OllamaModelPreset) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: preset.systemImage)
+                .foregroundStyle(AperturePalette.secondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.title)
+                    .font(.callout.weight(.semibold))
+                Text("\(preset.detail) · \(preset.downloadSize)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+
+            if assistantController.downloadingModel == preset.id {
+                VStack(alignment: .trailing, spacing: 4) {
+                    if let progress = assistantController.downloadProgress {
+                        ProgressView(value: progress)
+                            .frame(width: 92)
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    if let status = assistantController.downloadStatus {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            } else if assistantController.availableModels.contains(preset.id) {
+                Button(model.ollamaModel == preset.id ? "Selected" : "Use") {
+                    model.selectOllamaModel(preset.id)
+                }
+                .disabled(model.ollamaModel == preset.id && model.localAIEngine == .ollama)
+            } else {
+                Button("Download") {
+                    assistantController.install(preset, endpoint: model.ollamaEndpoint) {
+                        model.selectOllamaModel(preset.id)
+                    }
+                }
+                .disabled(assistantController.downloadingModel != nil)
+            }
+        }
     }
 
     private var widgets: some View {

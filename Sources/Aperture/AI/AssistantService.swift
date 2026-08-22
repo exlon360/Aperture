@@ -15,6 +15,45 @@ enum LocalAIEngine: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+struct OllamaModelPreset: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let detail: String
+    let downloadSize: String
+    let systemImage: String
+
+    static let catalog: [OllamaModelPreset] = [
+        OllamaModelPreset(
+            id: "gemma3:1b",
+            title: "Gemma 3 1B",
+            detail: "Fast everyday chat",
+            downloadSize: "815 MB",
+            systemImage: "hare.fill"
+        ),
+        OllamaModelPreset(
+            id: "qwen2.5:1.5b",
+            title: "Qwen 2.5 1.5B",
+            detail: "Compact multilingual model",
+            downloadSize: "986 MB",
+            systemImage: "character.bubble.fill"
+        ),
+        OllamaModelPreset(
+            id: "llama3.2:3b",
+            title: "Llama 3.2 3B",
+            detail: "Balanced general assistant",
+            downloadSize: "2.0 GB",
+            systemImage: "scale.3d"
+        ),
+        OllamaModelPreset(
+            id: "gemma3:4b",
+            title: "Gemma 3 4B",
+            detail: "Stronger answers and reasoning",
+            downloadSize: "3.3 GB",
+            systemImage: "sparkles"
+        )
+    ]
+}
+
 struct AssistantConfiguration {
     let endpoint: String
     let model: String
@@ -59,6 +98,11 @@ final class AssistantController: ObservableObject {
     @Published var useWebSearch = false
     @Published var webSearchStatus: String?
     @Published var appleModelAvailable = false
+    @Published private(set) var downloadingModel: String?
+    @Published private(set) var downloadProgress: Double?
+    @Published private(set) var downloadStatus: String?
+    @Published private(set) var modelInstallNotice: String?
+    @Published private(set) var modelInstallError: String?
 
     var configurationProvider: (() -> AssistantConfiguration)?
 
@@ -195,6 +239,41 @@ final class AssistantController: ObservableObject {
         messages = [ChatMessage(role: .assistant, content: "Fresh canvas. What should we think through?")]
     }
 
+    func install(
+        _ preset: OllamaModelPreset,
+        endpoint: String,
+        completion: @escaping () -> Void
+    ) {
+        guard downloadingModel == nil else { return }
+        downloadingModel = preset.id
+        downloadProgress = nil
+        downloadStatus = "Connecting to Ollama…"
+        modelInstallNotice = nil
+        modelInstallError = nil
+
+        Task {
+            do {
+                try await OllamaClient.pull(endpoint: endpoint, model: preset.id) { [weak self] progress, status in
+                    await MainActor.run {
+                        self?.downloadProgress = progress
+                        self?.downloadStatus = status
+                    }
+                }
+                availableModels = try await OllamaClient.models(endpoint: endpoint).sorted()
+                downloadingModel = nil
+                downloadProgress = nil
+                downloadStatus = nil
+                modelInstallNotice = "\(preset.title) is ready on this Mac."
+                completion()
+            } catch {
+                downloadingModel = nil
+                downloadProgress = nil
+                downloadStatus = nil
+                modelInstallError = "Couldn’t download \(preset.title). Make sure Ollama is running, then try again."
+            }
+        }
+    }
+
     private func webGroundedPrompt(question: String, results: [WebSearchResult]) -> String {
         let references = results.prefix(6).enumerated().map { index, result in
             """
@@ -245,6 +324,16 @@ private enum AssistantFailure: LocalizedError {
             return "Web Search returned no results for that request."
         case .engineUnavailable(let reason):
             return reason
+        }
+    }
+}
+
+private enum OllamaFailure: LocalizedError {
+    case message(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .message(let message): return message
         }
     }
 }
@@ -343,6 +432,18 @@ private enum OllamaClient {
         let models: [Model]
     }
 
+    private struct PullRequest: Encodable {
+        let model: String
+        let stream: Bool
+    }
+
+    private struct PullResponse: Decodable {
+        let status: String?
+        let total: Int64?
+        let completed: Int64?
+        let error: String?
+    }
+
     static func chat(endpoint: String, model: String, messages: [ChatMessage]) async throws -> String {
         let baseURL = try normalizedURL(endpoint)
         let url = baseURL.appending(path: "api/chat")
@@ -372,6 +473,40 @@ private enum OllamaClient {
             throw URLError(.badServerResponse)
         }
         return try JSONDecoder().decode(TagsResponse.self, from: data).models.map(\.name)
+    }
+
+    static func pull(
+        endpoint: String,
+        model: String,
+        progress: @escaping (Double?, String) async -> Void
+    ) async throws {
+        let baseURL = try normalizedURL(endpoint)
+        var request = URLRequest(url: baseURL.appending(path: "api/pull"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 3_600
+        request.httpBody = try JSONEncoder().encode(PullRequest(model: model, stream: true))
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        for try await line in bytes.lines {
+            guard let data = line.data(using: .utf8), !data.isEmpty else { continue }
+            let update = try JSONDecoder().decode(PullResponse.self, from: data)
+            if let error = update.error, !error.isEmpty {
+                throw OllamaFailure.message(error)
+            }
+            let fraction: Double?
+            if let completed = update.completed, let total = update.total, total > 0 {
+                fraction = min(max(Double(completed) / Double(total), 0), 1)
+            } else {
+                fraction = nil
+            }
+            let label = update.status?.replacingOccurrences(of: "sha256:", with: "") ?? "Downloading…"
+            await progress(fraction, label.prefix(1).uppercased() + label.dropFirst())
+        }
     }
 
     private static func normalizedURL(_ value: String) throws -> URL {
